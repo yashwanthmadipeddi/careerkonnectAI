@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 from pathlib import Path
 from datetime import timedelta
@@ -108,33 +108,29 @@ DATABASES = {
     }
 }
 
-# Only try PostgreSQL if psycopg2 is installed and DB details are supplied
-try:
-    import psycopg2
-    # Simple check to see if database exists or if we can access PostgreSQL
-    # If connection fails, it will raise exception and fallback to SQLite.
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-        connect_timeout=3
-    )
-    conn.close()
-    
-    # If successful, use PostgreSQL configuration
-    DATABASES['default'] = {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': DB_NAME,
-        'USER': DB_USER,
-        'PASSWORD': DB_PASSWORD,
-        'HOST': DB_HOST,
-        'PORT': DB_PORT,
+# Database configuration
+#
+# Production: PostgreSQL when database environment variables are supplied.
+# Local development: SQLite fallback.
+
+if all([DB_NAME, DB_USER, DB_PASSWORD, DB_HOST]):
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': DB_NAME,
+            'USER': DB_USER,
+            'PASSWORD': DB_PASSWORD,
+            'HOST': DB_HOST,
+            'PORT': DB_PORT,
+        }
     }
-    print("Database: Connected to PostgreSQL successfully.")
-except Exception as e:
-    print(f"Database: PostgreSQL connection failed ({e}). Falling back to SQLite.")
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'
@@ -253,3 +249,4 @@ LOGGING = {
         'ai_features': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
     },
 }
+
