@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import {
   Sparkles, FileText, Target, FileDown, Copy, Check, Search,
-  AlertCircle, RefreshCw, FileType2,
+  AlertCircle, RefreshCw, FileType2, Upload, CheckCircle2,
 } from 'lucide-react';
 
-import { Link } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { DashboardLayout } from '../../components/layout/DashboardLayout';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -69,6 +69,9 @@ const ChipBlock: React.FC<{ title: string; items: string[]; variant: any }> = ({
 };
 
 export const AIPrep: React.FC = () => {
+  const location = useLocation();
+  const autoAnalyze = Boolean((location.state as any)?.autoAnalyze);
+  const uploadedResumeName = (location.state as any)?.uploadedResumeName as string | undefined;
   const [activeTab, setActiveTab] = useState<Tab>('analyzer');
   const [jobDescription, setJobDescription] = useState('');
   const [copied, setCopied] = useState(false);
@@ -76,6 +79,8 @@ export const AIPrep: React.FC = () => {
   const [candidate, setCandidate] = useState<any>(null);
   const [fetchingCandidate, setFetchingCandidate] = useState(true);
   const [aiStatus, setAiStatus] = useState<{ configured: boolean; model: string } | null>(null);
+  const [selectedResumeFile, setSelectedResumeFile] = useState<File | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   // Per-feature state: idle -> loading -> success | error
   const [analysis, setAnalysis] = useState<any>(null);
@@ -93,31 +98,98 @@ export const AIPrep: React.FC = () => {
   const [downloading, setDownloading] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
+      let profile: any = null;
       try {
         const res = await api.get('/candidates/profile/');
-        setCandidate(res.data);
+        profile = res.data;
+        if (!cancelled) setCandidate(profile);
       } catch {
         /* profile is optional for the page to render */
       } finally {
-        setFetchingCandidate(false);
+        if (!cancelled) setFetchingCandidate(false);
       }
       try {
         const res = await api.get('/ai/status/');
-        setAiStatus(res.data);
+        if (!cancelled) setAiStatus(res.data);
       } catch {
         /* status is advisory only */
       }
-    })();
-  }, []);
 
-  /** AI Career Prep always uses the generated resume saved in the candidate profile. */
-  const buildBody = () => ({
-    body: jobDescription.trim()
-      ? { job_description: jobDescription.trim() }
-      : {},
-    config: {},
-  });
+      // A freshly uploaded resume is already saved to the candidate profile by
+      // ResumeBuilder. When navigation asks for auto-analysis, use that saved
+      // resume as the source and populate all three AI panels automatically.
+      if (!cancelled && autoAnalyze && profile?.resume) {
+        const run = async () => {
+          setAnalysisLoading(true);
+          setGapLoading(true);
+          setCoverLoading(true);
+          setAnalysisError(null);
+          setGapError(null);
+          setCoverError(null);
+          setAnalysis(null);
+          setGap(null);
+          setCover(null);
+          try {
+            const results = await Promise.allSettled([
+              api.post('/ai/resume-analyzer/', {}),
+              api.post('/ai/skill-gap/', {}),
+              api.post('/ai/cover-letter/', {}),
+            ]);
+
+            const [analysisResult, gapResult, coverResult] = results;
+            if (analysisResult.status === 'fulfilled') {
+              setAnalysis(analysisResult.value.data);
+            } else {
+              setAnalysisError(readError(analysisResult.reason, 'Unable to analyze your resume.'));
+            }
+            if (gapResult.status === 'fulfilled') {
+              setGap(gapResult.value.data);
+            } else {
+              setGapError(readError(gapResult.reason, 'Unable to analyze your skill gaps.'));
+            }
+            if (coverResult.status === 'fulfilled') {
+              setCover(coverResult.value.data.content || coverResult.value.data.cover_letter);
+              setCoverMeta(coverResult.value.data);
+            } else {
+              setCoverError(readError(coverResult.reason, 'Unable to generate your cover letter.'));
+            }
+          } finally {
+            if (!cancelled) {
+              setAnalysisLoading(false);
+              setGapLoading(false);
+              setCoverLoading(false);
+            }
+          }
+        };
+        void run();
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [autoAnalyze]);
+
+  /** Build the request payload for the selected resume. When a local file is
+   * selected, send it directly as FormData so the ATS/AI endpoint analyzes
+   * exactly that file instead of relying on whichever resume is already saved.
+   */
+  const buildRequest = () => {
+    if (selectedResumeFile) {
+      const data = new FormData();
+      data.append('resume', selectedResumeFile);
+      if (jobDescription.trim()) {
+        data.append('job_description', jobDescription.trim());
+      }
+      return { body: data, config: {} };
+    }
+
+    return {
+      body: jobDescription.trim()
+        ? { job_description: jobDescription.trim() }
+        : {},
+      config: {},
+    };
+  };
 
   const runAnalysis = async () => {
     if (analysisLoading) return;
@@ -125,9 +197,13 @@ export const AIPrep: React.FC = () => {
     setAnalysisError(null);
     setAnalysis(null);
     try {
-      const { body, config } = buildBody();
+      const { body, config } = buildRequest();
       const res = await api.post('/ai/resume-analyzer/', body, config);
       setAnalysis(res.data);
+      setCandidate((current: any) => ({
+        ...(current || {}),
+        ...(selectedResumeFile ? { resume: res.data.resume_name || current?.resume } : {}),
+      }));
     } catch (err) {
       setAnalysisError(readError(err, 'Unable to analyze your resume. Please try again.'));
     } finally {
@@ -141,7 +217,7 @@ export const AIPrep: React.FC = () => {
     setGapError(null);
     setGap(null);
     try {
-      const { body, config } = buildBody();
+      const { body, config } = buildRequest();
       const res = await api.post('/ai/skill-gap/', body, config);
       setGap(res.data);
     } catch (err) {
@@ -157,7 +233,7 @@ export const AIPrep: React.FC = () => {
     setCoverError(null);
     setCover(null);
     try {
-      const { body, config } = buildBody();
+      const { body, config } = buildRequest();
       const res = await api.post('/ai/cover-letter/', body, config);
       setCover(res.data.content || res.data.cover_letter);
       setCoverMeta(res.data);
@@ -265,8 +341,13 @@ export const AIPrep: React.FC = () => {
             AI Career Prep Center
           </h1>
           <p className="text-slate-500 dark:text-slate-400 mt-1">
-            Your saved profile resume is used automatically for ATS analysis, skill gaps and cover letters.
+            Use your saved resume or upload a different PDF/DOCX. The selected resume is the source for ATS analysis, skill gaps and cover letters.
           </p>
+          {autoAnalyze && (
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-300">
+              {uploadedResumeName ? `${uploadedResumeName} is uploaded successfully. ATS, skill gaps and cover letter are being analyzed automatically.` : 'Your resume was uploaded successfully. ATS, skill gaps and cover letter are being analyzed automatically.'}
+            </div>
+          )}
         </div>
 
         {aiStatus && !aiStatus.configured && (
@@ -297,7 +378,9 @@ export const AIPrep: React.FC = () => {
             <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/60 flex items-center gap-2 min-w-0">
               <FileText className="w-4 h-4 text-brand-500 flex-shrink-0" />
               <span className="text-xs font-bold text-slate-700 dark:text-slate-350 truncate">
-                {candidate?.generated_resume_text ? 'Generated CareerKonnect Resume' : 'No generated resume yet'}
+                {candidate?.resume
+                  ? String(candidate.resume).split('/').pop()
+                  : 'No resume uploaded'}
               </span>
             </div>
           </Card>
@@ -379,40 +462,70 @@ export const AIPrep: React.FC = () => {
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-505 uppercase tracking-wider mb-2">
-                    Saved Resume
+                    Resume for this analysis
                   </label>
                   <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-4 dark:border-brand-900/40 dark:bg-brand-950/20">
-                    {candidate?.generated_resume_text ? (
-                      <>
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-lg bg-brand-100 dark:bg-brand-900/30 flex items-center justify-center">
-                            <FileText className="w-5 h-5 text-brand-600 dark:text-brand-400" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-bold text-slate-800 dark:text-slate-200 truncate">
-                              Generated Resume
-                            </p>
-                            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                              This saved resume is used automatically by all AI tools.
-                            </p>
-                          </div>
-                          <Badge variant="success" size="sm">Ready</Badge>
-                        </div>
-                        <Link to="/resume-builder" className="inline-flex items-center mt-3 text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline">
-                          Edit or replace resume →
-                        </Link>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-sm font-bold text-slate-800 dark:text-slate-200">No generated resume yet</p>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                          Create your resume from your profile details before running ATS analysis.
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-brand-100 dark:bg-brand-900/30 flex items-center justify-center flex-shrink-0">
+                        <FileText className="w-5 h-5 text-brand-600 dark:text-brand-400" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-slate-800 dark:text-slate-200 truncate">
+                          {selectedResumeFile?.name || (candidate?.resume ? String(candidate.resume).split('/').pop() : 'Demo / saved resume')}
                         </p>
-                        <Link to="/resume-builder" className="inline-flex items-center mt-3 text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline">
-                          Create your resume →
-                        </Link>
-                      </>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                          {selectedResumeFile
+                            ? 'This file will be sent directly to the ATS analyzer when you click Check ATS.'
+                            : candidate?.resume
+                              ? 'Saved profile resume. Choose another file below to replace it for this analysis.'
+                              : 'Choose a PDF/DOCX to analyze your own resume.'}
+                        </p>
+                      </div>
+                      {selectedResumeFile ? (
+                        <Badge variant="warning" size="sm">New</Badge>
+                      ) : candidate?.resume ? (
+                        <Badge variant="success" size="sm">Ready</Badge>
+                      ) : null}
+                    </div>
+
+                    {uploadError && (
+                      <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-600 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-400">
+                        {uploadError}
+                      </div>
                     )}
+
+                    {selectedResumeFile && !uploadError && (
+                      <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle2 className="w-4 h-4" />
+                        Ready — Check ATS will use this selected resume
+                      </div>
+                    )}
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-darkbg-300/60 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer hover:border-brand-400 transition-colors">
+                        <Upload className="w-4 h-4" />
+                        {selectedResumeFile ? 'Choose Different Resume' : 'Upload Resume'}
+                        <input
+                          type="file"
+                          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                          className="hidden"
+                          onChange={(e) => {
+                            setUploadError(null);
+                            setSelectedResumeFile(e.target.files?.[0] || null);
+                            e.currentTarget.value = '';
+                          }}
+                        />
+                      </label>
+                      {candidate?.resume && (
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedResumeFile(null); setUploadError(null); }}
+                          className="px-3 py-2 rounded-lg text-xs font-bold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                        >
+                          Use saved resume
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -436,7 +549,7 @@ export const AIPrep: React.FC = () => {
 
                 {activeTab === 'analyzer' && (
                   <Button className="w-full" onClick={runAnalysis} isLoading={analysisLoading} disabled={busy} leftIcon={<Sparkles className="w-4 h-4" />}>
-                    {analysis ? 'Re-analyze Resume' : 'Analyze Resume'}
+                    {selectedResumeFile ? 'Check ATS for Uploaded Resume' : analysis ? 'Re-check ATS' : 'Check ATS'}
                   </Button>
                 )}
                 {activeTab === 'gap' && (
@@ -527,7 +640,7 @@ export const AIPrep: React.FC = () => {
                   ) : (
                     <EmptyPanel
                       icon={<FileText className="w-14 h-14 mx-auto opacity-30" />}
-                      text="Use the saved/generated resume from your profile to begin AI analysis."
+                      text="Upload a resume above or use the saved profile/demo resume to begin AI analysis."
                     />
                   )
             )}
@@ -599,7 +712,7 @@ export const AIPrep: React.FC = () => {
                   ) : (
                     <EmptyPanel
                       icon={<Target className="w-14 h-14 mx-auto opacity-30" />}
-                      text="Use the saved/generated resume from your profile to identify skill gaps."
+                      text="Upload a resume above or use the saved profile/demo resume to identify your skill gaps."
                     />
                   )
             )}

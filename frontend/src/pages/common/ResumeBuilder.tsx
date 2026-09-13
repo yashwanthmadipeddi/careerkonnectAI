@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { FileText, Sparkles, ArrowRight, Plus, Trash2, GraduationCap, Briefcase, Award } from 'lucide-react';
+import { FileText, Sparkles, ArrowRight, Plus, Trash2, GraduationCap, Briefcase, Award, Upload, CheckCircle2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '../../components/layout/DashboardLayout';
 import { Card } from '../../components/ui/Card';
@@ -20,11 +20,14 @@ const blankCertification = (): Certification => ({name:'',issuing_organization:'
 export const ResumeBuilder: React.FC = () => {
   const navigate = useNavigate();
   const [candidate, setCandidate] = useState<any>(null);
-  const [mode, setMode] = useState<'choice'|'builder'|'preview'>('choice');
+  const [mode, setMode] = useState<'choice'|'builder'|'preview'|'upload'>('choice');
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string|null>(null);
   const [success, setSuccess] = useState<string|null>(null);
+  const [uploadSuccessOpen, setUploadSuccessOpen] = useState(false);
   const [form, setForm] = useState<any>({ target_job_title:'', headline:'', summary:'', career_objective:'', skills:'', experience_years:'0', languages:'', achievements:'', preferred_location:'', work_preference:'Hybrid', profile:{first_name:'',last_name:'',phone_number:'',linkedin_url:'',github_url:'',portfolio_url:''}, experiences:[], educations:[], projects:[], certifications:[] });
   const [resumeText, setResumeText] = useState('');
 
@@ -65,6 +68,44 @@ export const ResumeBuilder: React.FC = () => {
     certifications: form.certifications.filter((x:Certification)=>x.name.trim() && x.issuing_organization.trim() && x.issue_date),
   });
 
+  const uploadResume = async () => {
+    if (!uploadFile) {
+      setError('Please choose a PDF or DOCX resume first.');
+      return;
+    }
+
+    const hasAllowedExtension =
+      uploadFile.name.toLowerCase().endsWith('.pdf') ||
+      uploadFile.name.toLowerCase().endsWith('.docx');
+
+    if (!hasAllowedExtension) {
+      setError('Please upload a PDF or DOCX file.');
+      return;
+    }
+
+    if (uploadFile.size > 5 * 1024 * 1024) {
+      setError('Resume must be 5 MB or smaller.');
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const data = new FormData();
+      data.append('resume', uploadFile);
+      const res = await api.put('/candidates/profile/', data);
+      setCandidate(res.data);
+      setSuccess('Resume uploaded and parsed successfully.');
+      setUploadSuccessOpen(true);
+    } catch (e: any) {
+      setError(e?.response?.data?.error || e?.response?.data?.detail || 'Could not upload your resume.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const generate = async () => {
     setSaving(true); setError(null); setSuccess(null);
     try { const res=await api.post('/candidates/resume/generate/', makePayload()); setResumeText(res.data.resume_text); setCandidate(res.data.candidate); setSuccess('Resume created and saved to your profile.'); setMode('preview'); }
@@ -77,17 +118,70 @@ export const ResumeBuilder: React.FC = () => {
   if (mode==='choice') return (
     <DashboardLayout>
       <div className="max-w-4xl mx-auto space-y-8">
-        <div><h1 className="text-2xl font-extrabold text-slate-800 dark:text-white flex items-center gap-2"><FileText className="w-7 h-7 text-brand-500"/>Resume Center</h1><p className="text-slate-500 dark:text-slate-400 mt-1">Choose a ready-made resume or build your own.</p></div>
+        <div><h1 className="text-2xl font-extrabold text-slate-800 dark:text-white flex items-center gap-2"><FileText className="w-7 h-7 text-brand-500"/>Resume Center</h1><p className="text-slate-500 dark:text-slate-400 mt-1">Use an existing demo resume, upload your own resume, or create one from your profile details.</p></div>
         {error && <div className="p-4 rounded-xl bg-red-50 text-red-600 text-sm">{error}</div>}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           <Card className="p-6 border-brand-200 dark:border-brand-900">
             <Sparkles className="w-8 h-8 text-brand-500 mb-4"/><h2 className="text-lg font-extrabold text-slate-800 dark:text-white">Try Existing Demo Resume</h2>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Use the ready-made CareerKonnect resume already stored in your account and jump straight to ATS analysis.</p>
             <Button className="mt-5" onClick={()=>navigate('/ai-prep')} leftIcon={<ArrowRight className="w-4 h-4" />}>Use Existing Resume</Button>
           </Card>
+          <Card className="p-6 border-emerald-200 dark:border-emerald-900/50">
+            <Upload className="w-8 h-8 text-emerald-500 mb-4"/><h2 className="text-lg font-extrabold text-slate-800 dark:text-white">Upload Your Resume</h2><p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Upload a PDF or DOCX and CareerKonnect will parse it once and reuse the saved text for ATS analysis.</p><Button className="mt-5" variant="outline" onClick={()=>setMode('upload')} leftIcon={<Upload className="w-4 h-4"/>}>Upload Resume</Button>
+          </Card>
           <Card className="p-6"><FileText className="w-8 h-8 text-violet-500 mb-4"/><h2 className="text-lg font-extrabold text-slate-800 dark:text-white">Create Your Own Resume</h2><p className="text-sm text-slate-500 dark:text-slate-400 mt-2">Enter education, undergraduate details, skills, projects, experience, certifications and more. CareerKonnect will generate and save the resume for you.</p><Button className="mt-5" variant="outline" onClick={()=>setMode('builder')}>Start Resume Builder</Button></Card>
         </div>
         {candidate?.generated_resume_text && <Card><p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Your current saved resume</p><pre className="whitespace-pre-wrap text-sm leading-relaxed text-slate-600 dark:text-slate-400 max-h-80 overflow-auto">{candidate.generated_resume_text}</pre></Card>}
+      </div>
+    </DashboardLayout>
+  );
+
+  if (mode==='upload') return (
+    <DashboardLayout>
+      <div className="max-w-3xl mx-auto space-y-6">
+        <div>
+          <h1 className="text-2xl font-extrabold text-slate-800 dark:text-white">Upload Your Resume</h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">Upload a PDF or DOCX. CareerKonnect will save it to your profile and reuse it for ATS analysis.</p>
+        </div>
+        {error && <div className="p-4 rounded-xl bg-red-50 text-red-600 text-sm">{error}</div>}
+        {success && <div className="p-4 rounded-xl bg-green-50 text-green-700 text-sm flex items-center gap-2"><CheckCircle2 className="w-5 h-5" />{success}</div>}
+        <Card className="p-6">
+          <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3">Resume file</label>
+          <input
+            type="file"
+            accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            onChange={(e) => { setUploadFile(e.target.files?.[0] || null); setError(null); setSuccess(null); }}
+            className="block w-full text-sm text-slate-600 dark:text-slate-300 file:mr-4 file:rounded-lg file:border-0 file:bg-brand-500 file:px-4 file:py-2 file:text-white hover:file:bg-brand-600"
+          />
+          <p className="text-xs text-slate-400 mt-2">PDF or DOCX, maximum 5 MB.</p>
+          {uploadFile && <p className="text-sm text-slate-600 dark:text-slate-300 mt-3">Selected: <span className="font-semibold">{uploadFile.name}</span></p>}
+          <div className="flex flex-wrap gap-3 mt-6">
+            <Button variant="outline" onClick={() => setMode('choice')} disabled={uploading}>Back</Button>
+            <Button onClick={uploadResume} isLoading={uploading} leftIcon={<Upload className="w-4 h-4" />}>Upload & Save Resume</Button>
+            {candidate?.resume && !uploading && <Button variant="outline" onClick={() => navigate('/ai-prep')} leftIcon={<Sparkles className="w-4 h-4" />}>Analyze with ATS</Button>}
+          </div>
+        </Card>
+
+        {uploadSuccessOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-2xl dark:border-slate-800 dark:bg-darkbg-200">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-950/40">
+                <CheckCircle2 className="h-8 w-8 text-emerald-600 dark:text-emerald-400" />
+              </div>
+              <h2 className="mt-5 text-center text-xl font-extrabold text-slate-800 dark:text-white">Resume uploaded successfully</h2>
+              <p className="mt-2 text-center text-sm leading-6 text-slate-500 dark:text-slate-400">
+                {candidate?.resume ? 'Your resume is now saved to your profile. We will automatically analyze ATS compatibility, skill gaps, and a cover letter next.' : 'Your resume is saved successfully.'}
+              </p>
+              <Button
+                className="mt-6 w-full"
+                onClick={() => navigate('/ai-prep', { state: { autoAnalyze: true, uploadedResumeName: candidate?.resume ? String(candidate.resume).split('/').pop() : undefined } })}
+                leftIcon={<Sparkles className="w-4 h-4" />}
+              >
+                OK, Analyze My Resume
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );
