@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 from pathlib import Path
 from datetime import timedelta
@@ -18,7 +18,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-fallback-secret-key-make-s
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
 ALLOWED_HOSTS = [
-    "careerkonnectai.onrender.com",
+    "careerkonnect-ai.vercel.app",
     "localhost",
     "127.0.0.1",
     "[::1]",
@@ -33,7 +33,7 @@ for _host in _env_allowed_hosts.split(','):
 
 # Django validates the Host header, which never contains a scheme.
 CSRF_TRUSTED_ORIGINS = [
-    "https://careerkonnectai.onrender.com",
+    "https://careerkonnect-ai.vercel.app",
 ]
 # Application definition
 INSTALLED_APPS = [
@@ -236,4 +236,5 @@ LOGGING = {
         'ai_features': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
     },
 }
+
 
