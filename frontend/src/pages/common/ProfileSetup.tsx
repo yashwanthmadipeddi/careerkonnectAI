@@ -64,11 +64,50 @@ export const ProfileSetup: React.FC = () => {
 
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setAvatarFile(file);
-      setAvatarRemoved(false);
-      setAvatarPreview(URL.createObjectURL(file));
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setErrorMessage('Please select a valid image file.');
+      return;
     }
+
+    // Keep uploads comfortably below the backend's 5 MB request threshold.
+    // Normal profile photos are resized in the browser before upload.
+    if (file.size > 2.5 * 1024 * 1024) {
+      const img = new Image();
+      img.onload = () => {
+        const maxDimension = 1400;
+        const scale = Math.min(1, maxDimension / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          setErrorMessage('Unable to prepare the selected image. Please choose another photo.');
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            setErrorMessage('Unable to prepare the selected image. Please choose another photo.');
+            return;
+          }
+          const compressed = new File([blob], 'profile-photo.jpg', { type: 'image/jpeg' });
+          setAvatarFile(compressed);
+          setAvatarRemoved(false);
+          setAvatarPreview(URL.createObjectURL(compressed));
+          setErrorMessage(null);
+        }, 'image/jpeg', 0.82);
+      };
+      img.onerror = () => setErrorMessage('The selected image could not be read. Please choose another photo.');
+      img.src = URL.createObjectURL(file);
+      return;
+    }
+
+    setAvatarFile(file);
+    setAvatarRemoved(false);
+    setAvatarPreview(URL.createObjectURL(file));
+    setErrorMessage(null);
   };
 
 
@@ -91,7 +130,7 @@ export const ProfileSetup: React.FC = () => {
     // Only the target job role is required in this onboarding step.
     // Profile photo, skills, and experience can be added later.
     if (!candidateForm.target_job_title.trim()) {
-      return setErrorMessage("Please enter your target job role.");
+      return setErrorMessage('Please enter your target job role.');
     }
 
     setLoading(true);
@@ -104,25 +143,33 @@ export const ProfileSetup: React.FC = () => {
         .map(s => s.trim())
         .filter(Boolean);
 
-      // Store the role explicitly and mirror it to headline for compatibility
-      // with the existing profile/resume screens.
-      const payload = {
-        target_job_title: targetJobTitle,
-        headline: targetJobTitle,
-        skills: skillsArray,
-        experience_years: Number(candidateForm.experience_years) || 0
-      };
+      // When a photo is selected or explicitly removed, send the candidate
+      // fields and avatar together as multipart/form-data. This avoids the
+      // separate profile-avatar request that fails in production.
+      if (avatarFile || avatarRemoved) {
+        const formData = new FormData();
+        formData.append('target_job_title', targetJobTitle);
+        formData.append('headline', targetJobTitle);
+        formData.append('experience_years', String(Number(candidateForm.experience_years) || 0));
 
-      await api.put('/candidates/profile/', payload);
+        if (skillsArray.length > 0) {
+          formData.append('skills', JSON.stringify(skillsArray));
+        }
 
-      // Avatar is optional. Save it only when the user selected a new image.
-      if (avatarFile) {
-        const avatarData = new FormData();
-        avatarData.append('avatar', avatarFile);
-        await api.put('/users/me/profile/', avatarData);
-      } else if (avatarRemoved) {
-        // Explicitly clear an existing profile photo.
-        await api.put('/users/me/profile/', { avatar: null });
+        if (avatarFile) {
+          formData.append('avatar', avatarFile, avatarFile.name);
+        } else {
+          formData.append('avatar_clear', 'true');
+        }
+
+        await api.put('/candidates/profile/', formData);
+      } else {
+        await api.put('/candidates/profile/', {
+          target_job_title: targetJobTitle,
+          headline: targetJobTitle,
+          skills: skillsArray,
+          experience_years: Number(candidateForm.experience_years) || 0
+        });
       }
 
       // Refresh auth state so route guards see the newly completed profile
@@ -131,11 +178,18 @@ export const ProfileSetup: React.FC = () => {
       navigate('/resume-builder');
     } catch (err: any) {
       setStep('form');
+      const apiData = err.response?.data;
+      const fieldErrors = apiData?.fields || apiData?.avatar;
+      let fieldText = '';
+
+      if (fieldErrors) {
+        fieldText = ` ${Object.entries(fieldErrors)
+          .map(([field, messages]) => `${field}: ${Array.isArray(messages) ? messages.join(', ') : String(messages)}`)
+          .join(' ')}`;
+      }
+
       setErrorMessage(
-        err.response?.data?.error ||
-        err.response?.data?.detail ||
-        err.detail ||
-        "Error saving candidate profile details."
+        `${apiData?.error || apiData?.detail || err.detail || 'Error saving candidate profile details.'}${fieldText}`
       );
     } finally {
       setLoading(false);

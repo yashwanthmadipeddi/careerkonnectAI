@@ -14,6 +14,7 @@ from .serializers import (
 from users.permissions import IsCandidateRole, IsRecruiterOrCompanyRole
 from authentication.services import AuthService
 from .resume_builder import save_generated_resume
+from users.serializers import ProfileSerializer
 
 class CandidateMeProfileView(APIView):
     permission_classes = (permissions.IsAuthenticated,)
@@ -36,11 +37,22 @@ class CandidateMeProfileView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def put(self, request):
-        """Update current candidate's profile."""
+        """Update candidate details and optionally the related profile avatar in one request."""
         if request.user.role != 'candidate':
             return Response({"error": "Only candidates can update their profiles."}, status=status.HTTP_403_FORBIDDEN)
-            
+
         candidate = request.user.candidate_profile
+        profile = request.user.profile
+
+        # The avatar belongs to Profile, while the rest of this endpoint updates
+        # Candidate. Accepting both in the same multipart request keeps onboarding
+        # to one HTTP call and avoids the production-only second-upload failure.
+        data = request.data.copy()
+        avatar_file = request.FILES.get('avatar')
+        avatar_clear = str(data.get('avatar_clear', '')).lower() in {'1', 'true', 'yes', 'on'}
+        data.pop('avatar', None)
+        data.pop('avatar_clear', None)
+
         raw_text = None
         if 'resume' in request.FILES:
             resume_file = request.FILES['resume']
@@ -58,15 +70,46 @@ class CandidateMeProfileView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        serializer = CandidateSerializer(candidate, data=request.data, partial=True)
-        if serializer.is_valid():
-            if raw_text is not None:
-                serializer.save(resume_raw_text=raw_text)
-            else:
-                serializer.save()
-            AuthService.log_activity(request.user, "Updated candidate profile details", request)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        candidate_serializer = CandidateSerializer(candidate, data=data, partial=True)
+        if not candidate_serializer.is_valid():
+            return Response(
+                {"error": "Please check your candidate profile details.", "fields": candidate_serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate the image through the existing ProfileSerializer before saving.
+        avatar_serializer = None
+        if avatar_file is not None:
+            avatar_serializer = ProfileSerializer(profile, data={'avatar': avatar_file}, partial=True)
+            if not avatar_serializer.is_valid():
+                return Response(
+                    {"error": "Unable to save the profile photo.", "fields": avatar_serializer.errors},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        try:
+            from django.db import transaction
+            with transaction.atomic():
+                if raw_text is not None:
+                    candidate_serializer.save(resume_raw_text=raw_text)
+                else:
+                    candidate_serializer.save()
+
+                if avatar_serializer is not None:
+                    avatar_serializer.save()
+                elif avatar_clear:
+                    if profile.avatar:
+                        profile.avatar.delete(save=False)
+                    profile.avatar = None
+                    profile.save(update_fields=['avatar', 'updated_at'])
+        except Exception:
+            return Response(
+                {"error": "Unable to save the profile photo. Please use a valid JPG, PNG, or WebP image smaller than 5 MB."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        AuthService.log_activity(request.user, "Updated candidate profile details", request)
+        return Response(CandidateSerializer(candidate).data, status=status.HTTP_200_OK)
 
 
 class GenerateResumeView(APIView):

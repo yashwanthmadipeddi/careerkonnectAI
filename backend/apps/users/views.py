@@ -1,6 +1,7 @@
 from rest_framework import status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.contrib.auth import get_user_model
 from .models import Profile, AuditLog
 from .serializers import ProfileSerializer, UserSerializer, AuditLogSerializer
@@ -19,6 +20,7 @@ class UserMeView(APIView):
 
 class ProfileMeView(APIView):
     permission_classes = (permissions.IsAuthenticated,)
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
 
     def get(self, request):
         """Retrieve current profile details."""
@@ -38,6 +40,16 @@ class ProfileMeView(APIView):
             profile.save(update_fields=['avatar', 'updated_at'])
             AuthService.log_activity(request.user, "Removed profile photo", request)
             return Response(ProfileSerializer(profile).data, status=status.HTTP_200_OK)
+
+        if request.FILES.get('avatar'):
+            # Make the upload path explicit and return a useful validation error
+            # instead of the generic profile-setup failure.
+            serializer = ProfileSerializer(profile, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                AuthService.log_activity(request.user, "Updated profile photo", request)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+            return Response({"error": "Unable to save the profile photo.", "fields": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = ProfileSerializer(profile, data=request.data, partial=True)
         if serializer.is_valid():
