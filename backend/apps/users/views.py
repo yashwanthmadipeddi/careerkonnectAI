@@ -27,8 +27,18 @@ class ProfileMeView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def put(self, request):
-        """Update current profile details."""
+        """Update current profile details, including explicit avatar removal."""
         profile = request.user.profile
+
+        # An explicit null/empty avatar means the user asked to remove the photo.
+        if 'avatar' in request.data and not request.data.get('avatar'):
+            if profile.avatar:
+                profile.avatar.delete(save=False)
+            profile.avatar = None
+            profile.save(update_fields=['avatar', 'updated_at'])
+            AuthService.log_activity(request.user, "Removed profile photo", request)
+            return Response(ProfileSerializer(profile).data, status=status.HTTP_200_OK)
+
         serializer = ProfileSerializer(profile, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()

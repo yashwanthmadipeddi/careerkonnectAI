@@ -2,11 +2,24 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { api } from '../services/api';
 import type { User, UserRole } from '../types';
 
+interface RegistrationResponse {
+  message: string;
+  verification_otp?: string;
+  expires_in_minutes?: number;
+  user: User;
+}
+
+interface DemoOtpResponse {
+  email: string;
+  demo_otp: string;
+  expires_in_minutes: number;
+}
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
-  register: (data: any) => Promise<void>;
+  register: (data: any) => Promise<RegistrationResponse>;
   verifyEmail: (email: string, otp: string) => Promise<void>;
   logout: () => Promise<void>;
   forgotPassword: (email: string) => Promise<void>;
@@ -15,6 +28,7 @@ interface AuthContextType {
   demoLogin: (
     role: Extract<UserRole, 'candidate' | 'recruiter'>
   ) => Promise<void>;
+  demoRecruiterOtp: () => Promise<DemoOtpResponse>;
   updateUserProfile: (profileData: any) => Promise<void>;
   refreshSession: () => Promise<void>;
 }
@@ -71,8 +85,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       const { access, refresh, user: userData } = response.data;
 
-      // Store both tokens in the same place so refresh rotation never
-      // leaves a stale access token behind in the other storage.
       if (rememberMe) {
         localStorage.setItem('access_token', access);
         localStorage.setItem('refresh_token', refresh);
@@ -93,9 +105,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  const register = async (data: any) => {
+  const register = async (data: any): Promise<RegistrationResponse> => {
     try {
-      await api.post('/auth/register/', data);
+      const response = await api.post('/auth/register/', data);
+      return response.data;
     } catch (error: any) {
       throw error.response?.data || error.message;
     }
@@ -139,6 +152,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     } finally {
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
+      sessionStorage.removeItem('access_token');
       sessionStorage.removeItem('refresh_token');
       setUser(null);
     }
@@ -185,7 +199,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const demoLogin = async (
     role: Extract<UserRole, 'candidate' | 'recruiter'>
   ) => {
-    // Ensure a completely fresh demo session.
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
     sessionStorage.removeItem('access_token');
@@ -200,8 +213,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       const { access, refresh, user: userData } = response.data;
 
-      // Demo sessions are temporary: keep both tokens in sessionStorage
-      // so they do not persist across browser sessions.
       sessionStorage.setItem('access_token', access);
       sessionStorage.setItem('refresh_token', refresh);
 
@@ -211,6 +222,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       throw error.response?.data || error.message;
     } finally {
       setLoading(false);
+    }
+  };
+
+  const demoRecruiterOtp = async (): Promise<DemoOtpResponse> => {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    sessionStorage.removeItem('access_token');
+    sessionStorage.removeItem('refresh_token');
+
+    try {
+      const response = await api.post('/auth/demo-otp/', { role: 'recruiter' });
+      return response.data as DemoOtpResponse;
+    } catch (error: any) {
+      console.error('Recruiter demo OTP creation failed:', error);
+      throw error.response?.data || error.message;
     }
   };
 
@@ -248,6 +274,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         resetPassword,
         googleLogin,
         demoLogin,
+        demoRecruiterOtp,
         updateUserProfile,
         refreshSession,
       }}

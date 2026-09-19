@@ -9,6 +9,7 @@ from .views import (
     ResetPasswordView,
     GoogleLoginView,
     DemoLoginView,
+    DemoOTPView,
     LogoutView,
     AuthConfigView
 )
@@ -22,6 +23,7 @@ urlpatterns = [
     path('reset-password/', ResetPasswordView.as_view(), name='auth_reset_password'),
     path('google/', GoogleLoginView.as_view(), name='auth_google'),
     path('demo/', DemoLoginView.as_view(), name='auth_demo'),
+    path('demo-otp/', DemoOTPView.as_view(), name='auth_demo_otp'),
     path('logout/', LogoutView.as_view(), name='auth_logout'),
     path('token/refresh/', TokenRefreshView.as_view(), name='auth_token_refresh'),
     path('config/', AuthConfigView.as_view(), name='auth_config'),

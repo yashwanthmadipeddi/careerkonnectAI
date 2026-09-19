@@ -32,7 +32,9 @@ class RegisterView(APIView):
             user = serializer.save()
             AuthService.log_activity(user, "User registered an account", request)
             return Response({
-                "message": "Registration successful! Please check your email for the verification code.",
+                "message": "Registration successful! Your verification code is shown on the verification page.",
+                "verification_otp": user.verification_otp,
+                "expires_in_minutes": 15,
                 "user": UserSerializer(user).data
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -88,10 +90,27 @@ class ResendOTPView(APIView):
                 return Response({"message": "Email is already verified."}, status=status.HTTP_400_BAD_REQUEST)
                 
             otp = AuthService.generate_otp(user)
+
+            if user.is_demo:
+                # Demo verification is intentionally self-contained: return the
+                # fresh server-generated OTP so a recruiter can test the flow
+                # without an external mailbox. This applies only to demo users.
+                AuthService.send_verification_email(user, otp)
+                AuthService.log_activity(user, "Requested demo verification OTP resend", request)
+                return Response({
+                    "message": "A new verification code was generated.",
+                    "verification_otp": otp,
+                    "expires_in_minutes": 15,
+                }, status=status.HTTP_200_OK)
+
             AuthService.send_verification_email(user, otp)
             AuthService.log_activity(user, "Requested verification email resend", request)
-            
-            return Response({"message": "Verification code resent successfully."}, status=status.HTTP_200_OK)
+
+            return Response({
+                "message": "Verification code resent successfully.",
+                "verification_otp": otp,
+                "expires_in_minutes": 15,
+            }, status=status.HTTP_200_OK)
         except User.DoesNotExist:
             # Return 200/success anyway to prevent user enumeration
             return Response({"message": "Verification code resent if email exists."}, status=status.HTTP_200_OK)
@@ -231,6 +250,51 @@ class DemoLoginView(APIView):
             'refresh': str(refresh),
             'user': UserSerializer(user).data,
         }, status=status.HTTP_200_OK)
+
+
+class DemoOTPView(APIView):
+    """Create a fresh recruiter demo account with a visible test OTP."""
+    permission_classes = (AllowAny,)
+
+    def post(self, request):
+        email = f"demo.recruiter.otp.{uuid.uuid4()}@careerkonnect.local"
+
+        user = User.objects.create_user(
+            email=email,
+            role='recruiter',
+            is_verified=False,
+            is_demo=True,
+        )
+        user.set_unusable_password()
+        user.save()
+
+        profile = user.profile
+        profile.first_name = 'Demo'
+        profile.last_name = 'Recruiter'
+
+        company_slug = f"careerkonnect-demo-otp-{uuid.uuid4().hex[:12]}"
+        company = Company.objects.create(
+            slug=company_slug,
+            name='CareerKonnect Demo',
+            industry='Technology',
+            location='Remote',
+            is_verified=True,
+        )
+        profile.company = company
+        profile.save()
+
+        otp = AuthService.generate_otp(user)
+        AuthService.send_verification_email(user, otp)
+        AuthService.log_activity(user, "Recruiter demo OTP account created", request)
+
+        return Response({
+            "message": "Recruiter demo account created. Use the demo OTP below to verify it.",
+            "email": email,
+            "demo_otp": otp,
+            "expires_in_minutes": 15,
+            "is_demo": True,
+            "role": "recruiter",
+        }, status=status.HTTP_201_CREATED)
 
 
 class LogoutView(APIView):

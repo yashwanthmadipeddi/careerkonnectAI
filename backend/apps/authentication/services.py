@@ -1,28 +1,32 @@
-import random
-from django.core.mail import send_mail
-from django.conf import settings
-from django.utils import timezone
+import hmac
+import secrets
 from datetime import timedelta
+
+from django.conf import settings
 from django.contrib.auth import get_user_model
-from google.oauth2 import id_token
+from django.core.mail import send_mail
+from django.utils import timezone
 from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
+
 from users.models import AuditLog
 
 User = get_user_model()
 
+
 class AuthService:
     @staticmethod
     def generate_otp(user):
-        """Generate a 6-digit OTP and set its expiration (15 minutes)."""
-        otp = f"{random.randint(100000, 999999)}"
+        """Generate a cryptographically stronger 6-digit OTP and set 15-minute expiry."""
+        otp = str(secrets.randbelow(900000) + 100000)
         user.verification_otp = otp
         user.otp_expiry = timezone.now() + timedelta(minutes=15)
-        user.save()
+        user.save(update_fields=['verification_otp', 'otp_expiry', 'updated_at'])
         return otp
 
     @staticmethod
     def send_verification_email(user, otp):
-        """Send the email verification OTP to the user's email."""
+        """Send the email verification OTP, or log it for a demo-only account."""
         subject = "Verify Your CareerKonnect Account"
         message = (
             f"Hi,\n\n"
@@ -32,6 +36,17 @@ class AuthService:
             f"Best regards,\n"
             f"The CareerKonnect Team"
         )
+
+        # Demo accounts intentionally do not send external email. The demo
+        # endpoint returns the generated OTP to the recruiter-facing UI so the
+        # complete verification flow can be tested without Gmail or a domain.
+        if getattr(user, 'is_demo', False):
+            print(
+                f"[CareerKonnect Demo OTP] email={user.email} "
+                f"otp={otp} expires={user.otp_expiry.isoformat()}"
+            )
+            return
+
         send_mail(
             subject,
             message,
@@ -42,21 +57,21 @@ class AuthService:
 
     @staticmethod
     def verify_otp(user, otp):
-        """Verify the OTP. If valid, mark user verified."""
+        """Verify the OTP. If valid, mark the user verified."""
         if not user.verification_otp or not user.otp_expiry:
             return False, "No OTP requested for this user."
-        
+
         if timezone.now() > user.otp_expiry:
             return False, "OTP has expired."
-        
-        if user.verification_otp != otp:
+
+        submitted_otp = str(otp).strip()
+        if not hmac.compare_digest(str(user.verification_otp), submitted_otp):
             return False, "Invalid OTP."
-        
-        # Mark verified
+
         user.is_verified = True
         user.verification_otp = None
         user.otp_expiry = None
-        user.save()
+        user.save(update_fields=['is_verified', 'verification_otp', 'otp_expiry', 'updated_at'])
         return True, "Email verified successfully."
 
     @staticmethod
@@ -89,18 +104,15 @@ class AuthService:
         If valid, return user info: email, first_name, last_name, picture
         """
         try:
-            # client_id is loaded from settings if available
             client_id = getattr(settings, 'GOOGLE_OAUTH_CLIENT_ID', None)
-            
-            # verify token
+
             idinfo = id_token.verify_oauth2_token(
-                token, 
-                google_requests.Request(), 
+                token,
+                google_requests.Request(),
                 audience=client_id,
                 clock_skew_in_seconds=10
             )
-            
-            # Extract claims
+
             return {
                 'email': idinfo.get('email'),
                 'first_name': idinfo.get('given_name', ''),
@@ -109,7 +121,6 @@ class AuthService:
                 'email_verified': idinfo.get('email_verified', False)
             }
         except Exception as e:
-            # Return None or throw if invalid token
             print(f"Google Token Verification Error: {e}")
             return None
 
@@ -125,7 +136,7 @@ class AuthService:
             else:
                 ip = request.META.get('REMOTE_ADDR')
             user_agent = request.META.get('HTTP_USER_AGENT', '')
-            
+
         AuditLog.objects.create(
             user=user if user.is_authenticated else None,
             action=action,

@@ -26,18 +26,16 @@ export const Register: React.FC = () => {
   const { register, handleSubmit, watch, formState: { errors } } = useForm();
   const passwordVal = watch('password');
 
-  // Reuses the same backend demo-login mechanism as the Sign In page
-  // (AuthContext.demoLogin -> POST /auth/demo/). No duplicate auth logic and
-  // no credentials in the frontend.
   const handleDemoLogin = async (role: 'candidate' | 'recruiter') => {
     setIsDemoLoading(true);
     setIsSubmitting(true);
     setErrorMessage(null);
+
     try {
       await demoLogin(role);
       navigate(`/dashboard/${role}`, { replace: true });
     } catch (err) {
-      console.error('Demo login failed:', err);
+      console.error('Demo access failed:', err);
       setErrorMessage('Demo access is unavailable right now. Please try again.');
     } finally {
       setIsDemoLoading(false);
@@ -57,8 +55,22 @@ export const Register: React.FC = () => {
         first_name: data.first_name,
         last_name: data.last_name,
       };
-      await registerUser(payload);
-      navigate('/verify-email', { state: { email: data.email } });
+      const registration = await registerUser(payload);
+
+      // The backend returns the OTP for this portfolio/demo build so the
+      // recruiter can complete the normal registration flow without email
+      // delivery. The OTP is displayed only on the verification page.
+      sessionStorage.setItem('careerkonnect_signup_email', data.email);
+      if (registration.verification_otp) {
+        sessionStorage.setItem('careerkonnect_signup_otp', registration.verification_otp);
+      }
+
+      navigate('/verify-email', {
+        state: {
+          email: data.email,
+          otp: registration.verification_otp || '',
+        },
+      });
     } catch (err: any) {
       setErrorMessage(
         err.email?.[0] || 
@@ -264,14 +276,11 @@ export const Register: React.FC = () => {
           </span>
         </div>
 
-        {/* Try Demo - same mechanism as the Sign In page */}
+        {/* Demo access */}
         <div className="rounded-xl border border-brand-200 bg-brand-50/50 p-4 dark:border-brand-900/50 dark:bg-brand-950/20">
           <div className="text-center">
             <p className="font-bold text-slate-800 dark:text-slate-100">
               Try the demo
-            </p>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              Explore CareerKonnect as a candidate or recruiter — no account needed.
             </p>
           </div>
 

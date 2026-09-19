@@ -29,7 +29,8 @@ class UserSerializer(serializers.ModelSerializer):
         elif obj.role == 'candidate':
             try:
                 candidate = obj.candidate_profile
-                return bool(candidate.headline and len(candidate.skills) > 0)
+                # Only the target job role is required during initial profile setup.
+                return bool((candidate.target_job_title or candidate.headline or '').strip())
             except Exception:
                 return False
         elif obj.role in ['recruiter', 'company']:

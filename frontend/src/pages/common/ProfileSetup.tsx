@@ -15,7 +15,7 @@ interface AIAnalysisResult {
 }
 
 export const ProfileSetup: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshSession } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -26,6 +26,7 @@ export const ProfileSetup: React.FC = () => {
   // Profile Photo Setup
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [avatarRemoved, setAvatarRemoved] = useState(false);
 
 
   // AI Analysis results
@@ -33,6 +34,7 @@ export const ProfileSetup: React.FC = () => {
 
   // Candidate Setup Form
   const [candidateForm, setCandidateForm] = useState({
+    target_job_title: '',
     headline: '',
     skills: '',
     experience_years: 0
@@ -51,13 +53,20 @@ export const ProfileSetup: React.FC = () => {
   useEffect(() => {
     if (!user) {
       navigate('/login');
+      return;
     }
-  }, [user]);
+
+    const existingAvatar = (user as any)?.profile?.avatar;
+    if (!avatarFile && !avatarRemoved && existingAvatar && !avatarPreview) {
+      setAvatarPreview(existingAvatar);
+    }
+  }, [user, navigate, avatarFile, avatarRemoved, avatarPreview]);
 
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setAvatarFile(file);
+      setAvatarRemoved(false);
       setAvatarPreview(URL.createObjectURL(file));
     }
   };
@@ -78,32 +87,56 @@ export const ProfileSetup: React.FC = () => {
 
   const handleCandidateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!candidateForm.headline || !candidateForm.skills) {
-      return setErrorMessage("Please fill out all required fields.");
+
+    // Only the target job role is required in this onboarding step.
+    // Profile photo, skills, and experience can be added later.
+    if (!candidateForm.target_job_title.trim()) {
+      return setErrorMessage("Please enter your target job role.");
     }
+
     setLoading(true);
     setErrorMessage(null);
+
     try {
-      // 1. Submit Candidate JSON details
-      const skillsArray = candidateForm.skills.split(',').map(s => s.trim()).filter(Boolean);
+      const targetJobTitle = candidateForm.target_job_title.trim();
+      const skillsArray = candidateForm.skills
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      // Store the role explicitly and mirror it to headline for compatibility
+      // with the existing profile/resume screens.
       const payload = {
-        headline: candidateForm.headline,
+        target_job_title: targetJobTitle,
+        headline: targetJobTitle,
         skills: skillsArray,
-        experience_years: Number(candidateForm.experience_years)
+        experience_years: Number(candidateForm.experience_years) || 0
       };
+
       await api.put('/candidates/profile/', payload);
 
-      // 2. Upload Avatar if selected
+      // Avatar is optional. Save it only when the user selected a new image.
       if (avatarFile) {
         const avatarData = new FormData();
         avatarData.append('avatar', avatarFile);
         await api.put('/users/me/profile/', avatarData);
+      } else if (avatarRemoved) {
+        // Explicitly clear an existing profile photo.
+        await api.put('/users/me/profile/', { avatar: null });
       }
 
+      // Refresh auth state so route guards see the newly completed profile
+      // before we move to the resume builder.
+      await refreshSession();
       navigate('/resume-builder');
     } catch (err: any) {
       setStep('form');
-      setErrorMessage(err.response?.data?.error || err.detail || "Error saving candidate profile details.");
+      setErrorMessage(
+        err.response?.data?.error ||
+        err.response?.data?.detail ||
+        err.detail ||
+        "Error saving candidate profile details."
+      );
     } finally {
       setLoading(false);
     }
@@ -185,25 +218,47 @@ export const ProfileSetup: React.FC = () => {
               </div>
             )}
 
-            {/* Profile Avatar Selection Section */}
+            {/* Profile Photo (optional) */}
             <div className="mb-6 flex flex-col items-center gap-3 border-b border-slate-200/50 dark:border-slate-800/40 pb-5">
               <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider text-center">
-                Profile Photo
+                Profile Photo <span className="normal-case font-medium text-slate-400">(Optional)</span>
               </label>
-              <div className="relative group w-20 h-20 rounded-full border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-darkbg-300/70 overflow-hidden flex items-center justify-center shadow-inner">
-                {avatarPreview ? (
+
+              <div className="w-20 h-20 rounded-full border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-darkbg-300/70 overflow-hidden flex items-center justify-center shadow-inner">
+                {avatarPreview && !avatarRemoved ? (
                   <img src={avatarPreview} alt="avatar preview" className="w-full h-full object-cover" />
                 ) : (
                   <ImageIcon className="w-6 h-6 text-slate-400" />
                 )}
-                <input 
-                  type="file" 
-                  accept="image/*" 
-                  onChange={handleAvatarChange} 
-                  className="absolute inset-0 opacity-0 cursor-pointer" 
-                />
               </div>
-              <span className="text-[10px] text-slate-400">Click circle to upload picture</span>
+
+              <div className="flex items-center gap-2">
+                <label className="px-3 py-1.5 rounded-lg border border-brand-200 dark:border-brand-900/50 text-[11px] font-semibold text-brand-600 dark:text-brand-400 cursor-pointer hover:bg-brand-50 dark:hover:bg-brand-950/20 transition-colors">
+                  {avatarPreview && !avatarRemoved ? 'Change Photo' : 'Upload Photo'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleAvatarChange}
+                    className="hidden"
+                  />
+                </label>
+
+                {avatarPreview && !avatarRemoved && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAvatarFile(null);
+                      setAvatarRemoved(true);
+                      setAvatarPreview(null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900/40 text-[11px] font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+
+              <span className="text-[10px] text-slate-400">You can upload, change, or remove your photo anytime.</span>
             </div>
 
             {user.role === 'candidate' ? (
@@ -218,8 +273,12 @@ export const ProfileSetup: React.FC = () => {
                     list="popular-job-roles" 
                     placeholder="Select a role or type your own" 
                     required
-                    value={candidateForm.headline}
-                    onChange={e => setCandidateForm({ ...candidateForm, headline: e.target.value })}
+                    value={candidateForm.target_job_title}
+                    onChange={e => setCandidateForm({
+                      ...candidateForm,
+                      target_job_title: e.target.value,
+                      headline: e.target.value
+                    })}
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-darkbg-300/70 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all dark:text-white text-sm"
                   />
                   <datalist id="popular-job-roles">
@@ -227,7 +286,7 @@ export const ProfileSetup: React.FC = () => {
                       <option key={role} value={role} />
                     ))}
                   </datalist>
-                  <span className="text-[10px] text-slate-400 block mt-1">Select from the scroll list when typing, or enter a custom title.</span>
+                  <span className="text-[10px] text-slate-400 block mt-1">Select from the list when typing, or enter a custom title.</span>
                 </div>
                 <Button type="submit" className="w-full mt-2" isLoading={loading}>
                   Continue to Resume Builder
@@ -321,7 +380,7 @@ export const ProfileSetup: React.FC = () => {
             <div>
               <h3 className="text-lg font-bold text-slate-800 dark:text-white">AI Resume Analysis In Progress...</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 max-w-sm mx-auto leading-relaxed">
-                Our AI model is parsing your CV text to calculate ATS compatibility against <strong>{candidateForm.headline}</strong> guidelines.
+                Our AI model is parsing your CV text to calculate ATS compatibility against <strong>{candidateForm.target_job_title}</strong> guidelines.
               </p>
             </div>
           </Card>
