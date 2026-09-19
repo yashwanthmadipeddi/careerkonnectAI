@@ -5,6 +5,7 @@ import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { api } from '../../services/api';
+import { getBrowserAvatar, saveBrowserAvatar, removeBrowserAvatar, isBrowserAvatarRemoved } from '../../services/browserAvatar';
 import { Building2, UserCheck, Image as ImageIcon, CheckCircle2, Sparkles } from 'lucide-react';
 
 interface AIAnalysisResult {
@@ -51,16 +52,60 @@ export const ProfileSetup: React.FC = () => {
   });
 
   useEffect(() => {
+    let cancelled = false;
+
     if (!user) {
       navigate('/login');
       return;
     }
 
-    const existingAvatar = (user as any)?.profile?.avatar;
-    if (!avatarFile && !avatarRemoved && existingAvatar && !avatarPreview) {
-      setAvatarPreview(existingAvatar);
+    const loadAvatar = async () => {
+      try {
+        const userId = String(user.id);
+        const browserAvatar = await getBrowserAvatar(userId);
+
+        if (cancelled) return;
+
+        if (browserAvatar) {
+          setAvatarPreview(browserAvatar);
+          return;
+        }
+
+        const existingAvatar = (user as any)?.profile?.avatar;
+        if (!isBrowserAvatarRemoved(userId) && existingAvatar && !avatarPreview) {
+          setAvatarPreview(existingAvatar);
+        }
+      } catch (error) {
+        console.error('Unable to load browser avatar:', error);
+      }
+    };
+
+    loadAvatar();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, navigate, avatarPreview]);
+
+  const persistAvatarLocally = async (file: File) => {
+    if (!user) return;
+
+    try {
+      await saveBrowserAvatar(String(user.id), file);
+
+      if (avatarPreview?.startsWith('blob:')) {
+        URL.revokeObjectURL(avatarPreview);
+      }
+
+      setAvatarFile(file);
+      setAvatarRemoved(false);
+      setAvatarPreview(URL.createObjectURL(file));
+      setErrorMessage(null);
+    } catch (error) {
+      console.error('Browser avatar storage failed:', error);
+      setErrorMessage('Unable to save the selected profile photo in this browser.');
     }
-  }, [user, navigate, avatarFile, avatarRemoved, avatarPreview]);
+  };
 
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -71,8 +116,6 @@ export const ProfileSetup: React.FC = () => {
       return;
     }
 
-    // Keep uploads comfortably below the backend's 5 MB request threshold.
-    // Normal profile photos are resized in the browser before upload.
     if (file.size > 2.5 * 1024 * 1024) {
       const img = new Image();
       img.onload = () => {
@@ -92,11 +135,7 @@ export const ProfileSetup: React.FC = () => {
             setErrorMessage('Unable to prepare the selected image. Please choose another photo.');
             return;
           }
-          const compressed = new File([blob], 'profile-photo.jpg', { type: 'image/jpeg' });
-          setAvatarFile(compressed);
-          setAvatarRemoved(false);
-          setAvatarPreview(URL.createObjectURL(compressed));
-          setErrorMessage(null);
+          persistAvatarLocally(new File([blob], 'profile-photo.jpg', { type: 'image/jpeg' }));
         }, 'image/jpeg', 0.82);
       };
       img.onerror = () => setErrorMessage('The selected image could not be read. Please choose another photo.');
@@ -104,10 +143,7 @@ export const ProfileSetup: React.FC = () => {
       return;
     }
 
-    setAvatarFile(file);
-    setAvatarRemoved(false);
-    setAvatarPreview(URL.createObjectURL(file));
-    setErrorMessage(null);
+    persistAvatarLocally(file);
   };
 
 
@@ -127,8 +163,6 @@ export const ProfileSetup: React.FC = () => {
   const handleCandidateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Only the target job role is required in this onboarding step.
-    // Profile photo, skills, and experience can be added later.
     if (!candidateForm.target_job_title.trim()) {
       return setErrorMessage('Please enter your target job role.');
     }
@@ -143,43 +177,20 @@ export const ProfileSetup: React.FC = () => {
         .map(s => s.trim())
         .filter(Boolean);
 
-      // When a photo is selected or explicitly removed, send the candidate
-      // fields and avatar together as multipart/form-data. This avoids the
-      // separate profile-avatar request that fails in production.
-      if (avatarFile || avatarRemoved) {
-        const formData = new FormData();
-        formData.append('target_job_title', targetJobTitle);
-        formData.append('headline', targetJobTitle);
-        formData.append('experience_years', String(Number(candidateForm.experience_years) || 0));
+      // The profile photo is browser-local. Only candidate text fields are sent to Django.
+      await api.put('/candidates/profile/', {
+        target_job_title: targetJobTitle,
+        headline: targetJobTitle,
+        skills: skillsArray,
+        experience_years: Number(candidateForm.experience_years) || 0
+      });
 
-        if (skillsArray.length > 0) {
-          formData.append('skills', JSON.stringify(skillsArray));
-        }
-
-        if (avatarFile) {
-          formData.append('avatar', avatarFile, avatarFile.name);
-        } else {
-          formData.append('avatar_clear', 'true');
-        }
-
-        await api.put('/candidates/profile/', formData);
-      } else {
-        await api.put('/candidates/profile/', {
-          target_job_title: targetJobTitle,
-          headline: targetJobTitle,
-          skills: skillsArray,
-          experience_years: Number(candidateForm.experience_years) || 0
-        });
-      }
-
-      // Refresh auth state so route guards see the newly completed profile
-      // before we move to the resume builder.
       await refreshSession();
       navigate('/resume-builder');
     } catch (err: any) {
       setStep('form');
       const apiData = err.response?.data;
-      const fieldErrors = apiData?.fields || apiData?.avatar;
+      const fieldErrors = apiData?.fields;
       let fieldText = '';
 
       if (fieldErrors) {
@@ -300,10 +311,21 @@ export const ProfileSetup: React.FC = () => {
                 {avatarPreview && !avatarRemoved && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setAvatarFile(null);
-                      setAvatarRemoved(true);
-                      setAvatarPreview(null);
+                    onClick={async () => {
+                      if (!user) return;
+                      try {
+                        await removeBrowserAvatar(String(user.id));
+                        if (avatarPreview?.startsWith('blob:')) {
+                          URL.revokeObjectURL(avatarPreview);
+                        }
+                        setAvatarFile(null);
+                        setAvatarRemoved(true);
+                        setAvatarPreview(null);
+                        setErrorMessage(null);
+                      } catch (error) {
+                        console.error('Unable to remove browser avatar:', error);
+                        setErrorMessage('Unable to remove the profile photo from this browser.');
+                      }
                     }}
                     className="px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900/40 text-[11px] font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
                   >
@@ -312,7 +334,7 @@ export const ProfileSetup: React.FC = () => {
                 )}
               </div>
 
-              <span className="text-[10px] text-slate-400">You can upload, change, or remove your photo anytime.</span>
+              <span className="text-[10px] text-slate-400">Stored on this browser. You can change or remove it anytime.</span>
             </div>
 
             {user.role === 'candidate' ? (

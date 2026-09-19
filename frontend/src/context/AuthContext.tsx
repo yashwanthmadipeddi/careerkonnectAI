@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { api } from '../services/api';
+import { getBrowserAvatar, isBrowserAvatarRemoved } from '../services/browserAvatar';
 import type { User, UserRole } from '../types';
 
 interface RegistrationResponse {
@@ -41,6 +42,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const hydrateUserWithBrowserAvatar = async (userData: User): Promise<User> => {
+    try {
+      const userId = String(userData.id);
+
+      if (isBrowserAvatarRemoved(userId)) {
+        return {
+          ...userData,
+          profile: {
+            ...userData.profile,
+            avatar: undefined,
+          },
+        };
+      }
+
+      const browserAvatar = await getBrowserAvatar(userId);
+
+      if (!browserAvatar) return userData;
+
+      return {
+        ...userData,
+        profile: {
+          ...userData.profile,
+          avatar: browserAvatar,
+        },
+      };
+    } catch (error) {
+      console.error('Unable to hydrate browser avatar:', error);
+      return userData;
+    }
+  };
+
   const refreshSession = async () => {
     const accessToken =
       localStorage.getItem('access_token') ||
@@ -54,7 +86,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
     try {
       const response = await api.get('/users/me/');
-      setUser(response.data);
+      setUser(await hydrateUserWithBrowserAvatar(response.data));
     } catch (error) {
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
@@ -97,7 +129,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         localStorage.removeItem('refresh_token');
       }
 
-      setUser(userData);
+      setUser(await hydrateUserWithBrowserAvatar(userData));
     } catch (error: any) {
       throw error.response?.data || error.message;
     } finally {
@@ -130,7 +162,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       sessionStorage.removeItem('access_token');
       sessionStorage.removeItem('refresh_token');
 
-      setUser(userData);
+      setUser(await hydrateUserWithBrowserAvatar(userData));
     } catch (error: any) {
       throw error.response?.data || error.message;
     } finally {
@@ -188,7 +220,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       localStorage.setItem('access_token', access);
       localStorage.setItem('refresh_token', refresh);
 
-      setUser(userData);
+      setUser(await hydrateUserWithBrowserAvatar(userData));
     } catch (error: any) {
       throw error.response?.data || error.message;
     } finally {
@@ -216,7 +248,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       sessionStorage.setItem('access_token', access);
       sessionStorage.setItem('refresh_token', refresh);
 
-      setUser(userData);
+      setUser(await hydrateUserWithBrowserAvatar(userData));
     } catch (error: any) {
       console.error('Demo login failed:', error);
       throw error.response?.data || error.message;
