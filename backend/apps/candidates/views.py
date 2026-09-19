@@ -102,12 +102,18 @@ class CandidateMeProfileView(APIView):
                         profile.avatar.delete(save=False)
                     profile.avatar = None
                     profile.save(update_fields=['avatar', 'updated_at'])
-        except Exception:
+        except Exception as exc:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.exception("PROFILE PHOTO UPLOAD FAILED")
+
             return Response(
-                {"error": "Unable to save the profile photo. Please use a valid JPG, PNG, or WebP image smaller than 5 MB."},
+                {
+                    "error": "Unable to save the profile photo.",
+                    "detail": str(exc),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         AuthService.log_activity(request.user, "Updated candidate profile details", request)
         return Response(CandidateSerializer(candidate).data, status=status.HTTP_200_OK)
 
