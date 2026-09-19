@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -19,12 +19,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-
-  const getAvatarUrl = (avatarPath?: string) => {
-    if (!avatarPath) return undefined;
-    if (avatarPath.startsWith('http')) return avatarPath;
-    return `http://localhost:8000${avatarPath}`;
-  };
 
   if (!user) return null;
 
@@ -127,7 +121,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
         <div className="p-4 border-t border-slate-200/50 dark:border-slate-800/40 flex items-center gap-3 bg-slate-50/50 dark:bg-darkbg-200/20">
           <div className="w-10 h-10 rounded-xl bg-slate-200 dark:bg-darkbg-100 flex items-center justify-center text-slate-700 dark:text-slate-300 font-bold overflow-hidden border border-slate-200 dark:border-slate-800">
             {user.profile.avatar ? (
-              <img src={getAvatarUrl(user.profile.avatar)} alt="avatar" className="w-full h-full object-cover" />
+              <img src={user.profile.avatar} alt="avatar" className="w-full h-full object-cover" />
             ) : (
               user.profile.first_name[0]
             )}
@@ -182,7 +176,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
               >
                 <div className="w-8 h-8 rounded-lg bg-slate-200 dark:bg-darkbg-100 flex items-center justify-center font-bold text-slate-700 dark:text-slate-300 overflow-hidden">
                   {user.profile.avatar ? (
-                    <img src={getAvatarUrl(user.profile.avatar)} alt="avatar" className="w-full h-full object-cover" />
+                    <img src={user.profile.avatar} alt="avatar" className="w-full h-full object-cover" />
                   ) : (
                     user.profile.first_name[0]
                   )}
@@ -220,3 +214,5 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
     </div>
   );
 };
+
+

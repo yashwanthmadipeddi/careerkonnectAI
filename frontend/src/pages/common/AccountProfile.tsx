@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { User, AlertCircle, CheckCircle2, Save, FileText, Sparkles, ExternalLink } from 'lucide-react';
+﻿import React, { useEffect, useState } from 'react';
+import { User, AlertCircle, CheckCircle2, Save, FileText, Sparkles, ExternalLink, Image as ImageIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../../components/layout/DashboardLayout';
 import { Card } from '../../components/ui/Card';
@@ -52,6 +52,27 @@ export const AccountProfile: React.FC = () => {
         {success && <div className="p-4 rounded-xl border border-green-200 bg-green-50 text-green-700 text-sm font-medium flex gap-2"><CheckCircle2 className="w-5 h-5" />{success}</div>}
 
         <Card>
+          <div className="flex flex-col items-center pb-5 mb-5 border-b border-slate-100 dark:border-slate-800/60">
+            <div className="w-24 h-24 rounded-full overflow-hidden border-2 border-brand-500/30 bg-slate-100 dark:bg-darkbg-100 flex items-center justify-center shadow-md">
+              {user?.profile?.avatar ? (
+                <img
+                  src={user.profile.avatar}
+                  alt="Profile"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center text-slate-400">
+                  <ImageIcon className="w-8 h-8" />
+                  <span className="text-[10px] mt-1">No Photo</span>
+                </div>
+              )}
+            </div>
+
+            <p className="mt-3 text-xs font-semibold text-slate-500 dark:text-slate-400">
+              Profile Photo
+            </p>
+          </div>
+
           <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/60 pb-4 mb-5">
             <div><p className="font-bold text-slate-800 dark:text-slate-200">{user?.email}</p><p className="text-xs text-slate-400 mt-0.5">Signed in account</p></div>
             <Badge variant="brand" size="sm">{user?.role}</Badge>
@@ -90,3 +111,4 @@ export const AccountProfile: React.FC = () => {
   );
 };
 export default AccountProfile;
+
